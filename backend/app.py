@@ -25,7 +25,7 @@ from history_manager import HistoryManager
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend-backend communication
-
+CORS(app, resources={r"/*": {"origins": "*"}})
 # Initialize components
 reader = CodeReader()
 analyzer = CodeAnalyzer()
@@ -42,7 +42,7 @@ def index():
 @app.route('/<path:filename>')
 def serve_static(filename):
     """Serve static files."""
-    return send_from_directory('../frontend', filename)
+    return send_from_directory(('.. ','frontend'), filename)
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
