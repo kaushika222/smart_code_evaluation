@@ -1,0 +1,90 @@
+<!-- TEST: Git should detect this -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Code Evaluator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>💻 Smart Code Evaluator</h1>
+            <p>Paste your code and get instant feedback for learning!</p>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Left Panel: Code Input -->
+            <div class="left-panel">
+                <h2>📝 Your Code</h2>
+                
+                <div class="input-section">
+                    <div class="language-selector">
+                        <label for="language">Select Language:</label>
+                        <select id="language">
+                            <option value="python">Python</option>
+                            <option value="c">C</option>
+                            <option value="cpp">C++</option>
+                        </select>
+                    </div>
+
+                    <textarea id="code-input" placeholder="Paste your code here... 
+Example: 
+def hello_world():
+    print('Hello, World!')" rows="20"></textarea>
+                    
+                    <div class="button-group">
+                        <button id="analyze-btn" class="btn analyze-btn">
+                            🔍 Analyze Code
+                        </button>
+                        <button id="clear-btn" class="btn clear-btn">
+                            🗑️ Clear
+                        </button>
+                        <button id="example-btn" class="btn example-btn">
+                            📋 Load Example
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Results -->
+            <div class="right-panel">
+                <h2>📊 Analysis Results</h2>
+                
+                <div id="loading" class="loading hidden">
+                    <div class="spinner"></div>
+                    <p>Analyzing your code...</p>
+                </div>
+
+                <div id="results" class="results hidden">
+                    <!-- Results will be displayed here -->
+                </div>
+
+                <div id="welcome-message" class="welcome-message">
+                    <h3>👋 Welcome!</h3>
+                    <p>Paste your code on the left and click "Analyze Code" to get:</p>
+                    <ul>
+                        <li>✅ Code structure analysis</li>
+                        <li>⚠️ Beginner mistake detection</li>
+                        <li>🎯 Personalized feedback</li>
+                        <li>📚 Learning recommendations</li>
+                        <li>🤖 AI-code detection (beta)</li>
+                    </ul>
+                    <p class="tip">💡 Tip: Try our example code to see how it works!</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>Smart Code Evaluator • Learn Programming • Made with ❤️ for Students</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
