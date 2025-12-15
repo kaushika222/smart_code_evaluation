@@ -365,11 +365,10 @@ def test_mistake_detector():
 def detect_in_file(file_path: str):
     """Detect mistakes in a code file."""
     from code_reader import CodeReader
-    from analyzer import CodeAnalyzer
-    
+    from analyzer import analyzer
     # Read and analyze the file
     reader = CodeReader()
-    analyzer = CodeAnalyzer()
+    analyzer = analyzer()
     detector = MistakeDetector()
     
     code_lines, language, error = reader.read_code_file(file_path)

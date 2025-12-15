@@ -2,16 +2,13 @@
 smart-code-evaluator/backend/app.py
 Flask web server for the Smart Code Evaluator.
 """
-"""
-smart-code-evaluator/backend/app.py
-Flask web server for the Smart Code Evaluator.
-"""
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 import sys
 import json
+from datetime import datetime
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,6 +23,7 @@ from history_manager import HistoryManager
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend-backend communication
 CORS(app, resources={r"/*": {"origins": "*"}})
+
 # Initialize components
 reader = CodeReader()
 analyzer = CodeAnalyzer()
@@ -33,12 +31,15 @@ detector = MistakeDetector()
 feedback_gen = FeedbackGenerator()
 ai_detector = AIDetector()
 history_manager = HistoryManager()
-QUESTIONS_PATH = os.path.join(os.path.dirname(__file__), "../data/questions.json")
+
+# Path to questions
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 QUESTIONS_PATH = os.path.join(BASE_DIR, "..", "data", "questions.json")
 
-with open(QUESTIONS_PATH, "r", encoding="utf-8-sig") as f:
+# Load questions
+with open(QUESTIONS_PATH, "r", encoding="utf-8") as f:
     QUESTIONS = json.load(f)
+
 @app.route('/')
 def index():
     """Serve the frontend index.html."""
@@ -47,11 +48,11 @@ def index():
 @app.route('/<path:filename>')
 def serve_static(filename):
     """Serve static files."""
-    return send_from_directory(('.. ','frontend'), filename)
+    return send_from_directory('../frontend', filename)
 
-@app.route('/analyze', methods=['POST'])
-def analyze():
-    """Analyze code from frontend."""
+@app.route('/analyze-old', methods=['POST'])
+def analyze_old():
+    """Analyze code from frontend (old method)."""
     try:
         # Get data from request
         data = request.json
@@ -101,8 +102,53 @@ def analyze():
         return jsonify(feedback)
         
     except Exception as e:
-        print(f"Error in /analyze: {str(e)}")
+        print(f"Error in /analyze-old: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/analyze', methods=['POST'])
+def analyze_code():
+    """Analyze code submission with question-based evaluation."""
+    try:
+        data = request.json
+        code = data.get('code', '')
+        question_id = data.get('question_id')
+        language = data.get('language', 'python')
+        
+        if not code:
+            return jsonify({"error": "No code provided"}), 400
+        
+        if len(code) > 10000:
+            return jsonify({"error": "Code too large (max 10000 characters)"}), 400
+        
+        # Analyze the code using new analyzer
+        result = analyzer.analyze_submission(code, question_id)
+        
+        # Get question info
+        question_info = {}
+        for category in QUESTIONS.values():
+            for question in category:
+                if question['id'] == question_id:
+                    question_info = question
+                    break
+            if question_info:
+                break
+        
+        # Save to history
+        history_manager.save_analysis(
+            feedback=result,
+            code_snippet=code,
+            filename=f"question_{question_id}.{language}"
+        )
+        
+        return jsonify({
+            "success": True,
+            "analysis": result,
+            "question": question_info
+        })
+        
+    except Exception as e:
+        print(f"Error in /analyze: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/history', methods=['GET'])
 def get_history():
@@ -131,11 +177,12 @@ def health_check():
         'version': '1.0',
         'modules_loaded': True
     })
+
 @app.route('/questions', methods=['GET'])
 def get_questions():
     """
     Return coding practice questions.
-    Optional query param: ?topic=for_loop / while_loop / nested_loop / if_else
+    Optional query param: ?topic=for_loop / while_loop / if_else / nested_if_else
     """
     topic = request.args.get("topic")
 
@@ -143,6 +190,29 @@ def get_questions():
         return jsonify(QUESTIONS.get(topic, []))
 
     return jsonify(QUESTIONS)
+
+@app.route('/questions/all', methods=['GET'])
+def get_all_questions():
+    """Get all questions organized by topic."""
+    return jsonify(QUESTIONS)
+
+@app.route('/questions/<int:question_id>', methods=['GET'])
+def get_question(question_id):
+    """Get specific question by ID."""
+    try:
+        # Search for the question
+        for category in QUESTIONS.values():
+            for question in category:
+                if question['id'] == question_id:
+                    return jsonify({
+                        "success": True,
+                        "question": question
+                    })
+        
+        return jsonify({"success": False, "error": "Question not found"}), 404
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/examples', methods=['GET'])
 def get_examples():
@@ -230,6 +300,92 @@ int main() {
     
     return jsonify(examples)
 
+@app.route('/analyze/quick', methods=['POST'])
+def quick_analyze():
+    """Quick code analysis without question ID."""
+    try:
+        data = request.json
+        code = data.get('code', '')
+        
+        if not code:
+            return jsonify({"error": "No code provided"}), 400
+        
+        # Use code reader for basic analysis
+        analysis = reader.read_code(code)
+        quality = reader.analyze_code_quality(code)
+        variables = reader.check_variable_names(code)
+        
+        result = {
+            "basic_analysis": analysis,
+            "quality_analysis": quality,
+            "variable_analysis": variables,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return jsonify({
+            "success": True,
+            "analysis": result
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/topics', methods=['GET'])
+def get_topics():
+    """Get all available question topics."""
+    topics = list(QUESTIONS.keys())
+    return jsonify({
+        "topics": topics,
+        "count": len(topics)
+    })
+
+@app.route('/topics/<topic_name>/questions', methods=['GET'])
+def get_topic_questions(topic_name):
+    """Get all questions for a specific topic."""
+    if topic_name in QUESTIONS:
+        return jsonify({
+            "topic": topic_name,
+            "questions": QUESTIONS[topic_name]
+        })
+    else:
+        return jsonify({"error": f"Topic '{topic_name}' not found"}), 404
+
+@app.route('/difficulty/<level>', methods=['GET'])
+def get_questions_by_difficulty(level):
+    """Get questions by difficulty level."""
+    level = level.lower()
+    filtered_questions = []
+    
+    for category in QUESTIONS.values():
+        for question in category:
+            if question.get('difficulty', '').lower() == level:
+                filtered_questions.append(question)
+    
+    return jsonify({
+        "difficulty": level,
+        "count": len(filtered_questions),
+        "questions": filtered_questions
+    })
+
+@app.route('/concepts/<concept_name>', methods=['GET'])
+def get_questions_by_concept(concept_name):
+    """Get questions that require a specific concept."""
+    concept_name = concept_name.lower()
+    filtered_questions = []
+    
+    for category in QUESTIONS.values():
+        for question in category:
+            concepts = [c.lower() for c in question.get('concepts', [])]
+            if concept_name in concepts:
+                filtered_questions.append(question)
+    
+    return jsonify({
+        "concept": concept_name,
+        "count": len(filtered_questions),
+        "questions": filtered_questions
+    })
+
+# Error handlers
 @app.errorhandler(404)
 def not_found(error):
     """Handle 404 errors."""
@@ -245,15 +401,24 @@ if __name__ == '__main__':
     print("=" * 50)
     print("📁 Frontend: http://localhost:5000")
     print("📡 API Endpoints:")
-    print("  • GET  /                - Main web interface")
-    print("  • POST /analyze         - Analyze code")
-    print("  • GET  /history         - Get analysis history")
-    print("  • GET  /stats           - Get statistics")
-    print("  • GET  /examples        - Get example codes")
-    print("  • GET  /health          - Health check")
+    print("  • GET  /                           - Main web interface")
+    print("  • POST /analyze                    - Analyze code with question ID")
+    print("  • POST /analyze-old                - Legacy code analysis")
+    print("  • POST /analyze/quick              - Quick code analysis")
+    print("  • GET  /history                    - Get analysis history")
+    print("  • GET  /stats                      - Get statistics")
+    print("  • GET  /questions                  - Get all questions")
+    print("  • GET  /questions/all              - Get all questions organized")
+    print("  • GET  /questions/<id>             - Get specific question")
+    print("  • GET  /topics                     - Get all topics")
+    print("  • GET  /topics/<topic>/questions   - Get questions by topic")
+    print("  • GET  /difficulty/<level>         - Get questions by difficulty")
+    print("  • GET  /concepts/<concept>         - Get questions by concept")
+    print("  • GET  /examples                   - Get example codes")
+    print("  • GET  /health                     - Health check")
     print("=" * 50)
     print("⚡ Server running... Press Ctrl+C to stop")
     print("=" * 50)
     
     # Run the Flask app
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, host='0.0.0.0')

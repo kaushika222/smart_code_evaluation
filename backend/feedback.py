@@ -554,7 +554,7 @@ def test_feedback_generator():
 def generate_feedback_for_file(file_path: str):
     """Generate feedback for a code file and save to history."""
     from code_reader import CodeReader
-    from analyser import analyser
+    from analyzer import analyzer
     from mistakes import MistakeDetector
     
     # Initialize components
