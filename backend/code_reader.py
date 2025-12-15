@@ -1,447 +1,452 @@
-"""
-smart-code-evaluator/backend/code_reader.py
-Secure and robust source code reader with validation and error handling.
-Version: 2.0
-Author: Smart Code Evaluator Team
-"""
-
-import os
-import logging
-from typing import List, Optional, Tuple
-from pathlib import Path
-
-# Configure logging for security and debugging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Security: Define allowed file extensions and maximum file size (1MB)
-ALLOWED_EXTENSIONS = {'.c', '.cpp', '.py'}
-MAX_FILE_SIZE = 1024 * 1024  # 1MB
-
+# code_reader.py
+import ast
+import json
+import sys
 
 class CodeReader:
-    """Secure code reader with validation and sanitization."""
-    
     def __init__(self):
-        self.supported_languages = {
-            'c': 'C',
-            'cpp': 'C++',
-            'py': 'Python'
-        }
+        self.code_structure = {}
+        self.questions_data = self.load_questions()
     
-    def read_code_file(self, file_path: str) -> Tuple[List[str], Optional[str], Optional[str]]:
-        """
-        Securely read and clean code from a file.
-        
-        Args:
-            file_path: Path to the source code file
-            
-        Returns:
-            Tuple containing:
-            - List of cleaned code lines (empty list on error)
-            - Language type or None
-            - Error message or None
-        """
-        
-        # Security: Validate input
-        if not file_path or not isinstance(file_path, str):
-            return [], None, "Invalid file path provided"
-        
-        # Security: Convert to absolute path and normalize
+    def load_questions(self):
+        """Load questions from JSON file"""
         try:
-            file_path = os.path.abspath(file_path)
-            normalized_path = os.path.normpath(file_path)
+            with open('data/questions.json', 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print("❌ Questions file not found. Using empty structure.")
+            return {}
+        except json.JSONDecodeError:
+            print("❌ Error decoding JSON. Using empty structure.")
+            return {}
+    
+    def read_code(self, code: str, question_id: int = None):
+        """
+        Read and analyze submitted code
+        Returns: Dictionary with analysis results
+        """
+        try:
+            # Parse the code
+            tree = ast.parse(code)
             
-            # Security: Check for path traversal attacks
-            if '..' in file_path or file_path != normalized_path:
-                logger.warning(f"Potential path traversal attempt: {file_path}")
-                return [], None, "Invalid file path"
-                
+            # Extract basic information
+            functions = []
+            classes = []
+            imports = []
+            variables = []
+            loops = []
+            conditionals = []
+            
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    functions.append(node.name)
+                elif isinstance(node, ast.ClassDef):
+                    classes.append(node.name)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imports.append(alias.name)
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module if node.module else ""
+                    imports.append(f"from {module}")
+                elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                    variables.append(node.id)
+                elif isinstance(node, ast.For):
+                    loops.append("for")
+                elif isinstance(node, ast.While):
+                    loops.append("while")
+                elif isinstance(node, ast.If):
+                    conditionals.append("if")
+            
+            # Get question details if question_id is provided
+            question_info = self.get_question_info(question_id) if question_id else {}
+            
+            # Check required concepts for the question
+            required_concepts = question_info.get('concepts', [])
+            detected_concepts = self.detect_concepts(code)
+            missing_concepts = [c for c in required_concepts if c not in detected_concepts]
+            
+            self.code_structure = {
+                "basic_info": {
+                    "functions": list(set(functions)),
+                    "classes": list(set(classes)),
+                    "imports": list(set(imports)),
+                    "lines": len(code.split('\n')),
+                    "characters": len(code),
+                    "indentation_levels": self.check_indentation(code)
+                },
+                "concepts_analysis": {
+                    "detected_concepts": detected_concepts,
+                    "required_concepts": required_concepts,
+                    "missing_concepts": missing_concepts,
+                    "concepts_match": len(missing_concepts) == 0
+                },
+                "syntax_check": {
+                    "has_syntax_error": False,
+                    "error_message": None
+                },
+                "question_info": question_info
+            }
+            
+            return self.code_structure
+            
+        except SyntaxError as e:
+            return {
+                "basic_info": {
+                    "lines": len(code.split('\n')),
+                    "characters": len(code)
+                },
+                "concepts_analysis": {
+                    "detected_concepts": [],
+                    "required_concepts": [],
+                    "missing_concepts": [],
+                    "concepts_match": False
+                },
+                "syntax_check": {
+                    "has_syntax_error": True,
+                    "error_message": str(e),
+                    "error_line": e.lineno if hasattr(e, 'lineno') else None,
+                    "error_column": e.offset if hasattr(e, 'offset') else None
+                },
+                "question_info": {}
+            }
         except Exception as e:
-            logger.error(f"Path normalization failed: {e}")
-            return [], None, "Invalid file path"
-        
-        # Security: Check file exists
-        if not os.path.exists(file_path):
-            logger.warning(f"File not found: {file_path}")
-            return [], None, f"File '{os.path.basename(file_path)}' not found"
-        
-        # Security: Check if it's a file (not directory)
-        if not os.path.isfile(file_path):
-            return [], None, "Path is not a file"
-        
-        # Security: Check file size
-        try:
-            file_size = os.path.getsize(file_path)
-            if file_size > MAX_FILE_SIZE:
-                return [], None, f"File too large. Maximum size is {MAX_FILE_SIZE//1024}KB"
-            if file_size == 0:
-                return [], None, "File is empty"
-        except OSError as e:
-            logger.error(f"File size check failed: {e}")
-            return [], None, "Cannot access file"
-        
-        # Security: Validate file extension
-        file_ext = Path(file_path).suffix.lower()
-        if file_ext not in ALLOWED_EXTENSIONS:
-            logger.warning(f"Unsupported file type: {file_ext}")
-            return [], None, f"File type '{file_ext}' not supported. Use: {', '.join(ALLOWED_EXTENSIONS)}"
-        
-        # Determine language
-        language = self._get_language_from_extension(file_ext)
-        
-        # Read file with error handling
-        try:
-            # Security: Open with explicit encoding to avoid encoding attacks
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
-                content = file.read()
-                
-                # Security: Basic content validation
-                if self._contains_malicious_patterns(content):
-                    logger.warning(f"Potential malicious content in: {file_path}")
-                    return [], language, "File contains suspicious patterns"
-                
-                # Clean the code
-                cleaned_lines = self._clean_code(content, language)
-                
-                if not cleaned_lines:
-                    return [], language, "No valid code found after cleaning"
-                
-                logger.info(f"Successfully read {len(cleaned_lines)} lines from {file_path}")
-                return cleaned_lines, language, None
-                
-        except PermissionError:
-            return [], language, "Permission denied to read file"
-        except UnicodeDecodeError:
-            return [], language, "File encoding error"
-        except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
-            return [], language, f"Error reading file: {str(e)}"
+            return {"error": f"Error reading code: {str(e)}"}
     
-    def read_code_from_text(self, code_text: str, language: str) -> Tuple[List[str], Optional[str]]:
-        """
-        Read and clean code from text input.
-        
-        Args:
-            code_text: Source code as text
-            language: Programming language ('python', 'c', or 'cpp')
-            
-        Returns:
-            Tuple containing cleaned lines and error message (if any)
-        """
-        # Security: Validate inputs
-        if not code_text or not isinstance(code_text, str):
-            return [], "No code provided"
-        
-        if not language or language.lower() not in ['python', 'c', 'cpp']:
-            return [], "Unsupported language"
-        
-        # Security: Check for excessive input size
-        if len(code_text) > MAX_FILE_SIZE:
-            return [], f"Code too large. Maximum size is {MAX_FILE_SIZE//1024}KB"
-        
-        # Security: Basic malicious pattern check
-        if self._contains_malicious_patterns(code_text):
-            logger.warning("Potential malicious content in text input")
-            return [], "Code contains suspicious patterns"
-        
-        # Clean the code
-        try:
-            cleaned_lines = self._clean_code(code_text, language.lower())
-            
-            if not cleaned_lines:
-                return [], "No valid code found after cleaning"
-            
-            return cleaned_lines, None
-            
-        except Exception as e:
-            logger.error(f"Error processing code text: {e}")
-            return [], f"Error processing code: {str(e)}"
+    def get_question_info(self, question_id: int):
+        """Get question details by ID"""
+        for category in self.questions_data.values():
+            for question in category:
+                if question['id'] == question_id:
+                    return question
+        return {}
     
-    def _get_language_from_extension(self, extension: str) -> str:
-        """Map file extension to language."""
-        ext_to_lang = {
-            '.py': 'python',
-            '.c': 'c',
-            '.cpp': 'cpp'
-        }
-        return ext_to_lang.get(extension, 'unknown')
-    
-    def _contains_malicious_patterns(self, content: str) -> bool:
-        """
-        Basic check for potentially malicious patterns.
-        In production, this should be enhanced with more sophisticated checks.
-        """
-        dangerous_patterns = [
-            'import os', 'import sys', '__import__', 'eval(', 'exec(',
-            'open(', 'compile(', 'input(', 'subprocess', 'os.system',
-            'socket.', 'http.client', 'urllib.request'
-        ]
+    def detect_concepts(self, code: str):
+        """Detect programming concepts in the code"""
+        concepts = []
+        code_lower = code.lower()
         
-        # Only check for dangerous patterns in suspicious contexts
-        for pattern in dangerous_patterns:
-            if pattern in content.lower():
-                # Check if it's in a comment (safer)
-                if not self._is_in_comment(content, pattern):
-                    return True
-        return False
+        # Check for loops
+        if 'for ' in code_lower:
+            concepts.append("for")
+        
+        if 'while ' in code_lower:
+            concepts.append("while")
+        
+        # Check for nested loops
+        if code_lower.count('for ') > 1 or code_lower.count('while ') > 1:
+            concepts.append("nested-loop")
+        
+        # Check for conditionals
+        if 'if ' in code_lower:
+            concepts.append("if")
+            if 'elif ' in code_lower or code_lower.count('if ') > 1:
+                concepts.append("nested-if")
+        
+        if 'else:' in code_lower:
+            concepts.append("else")
+        
+        # Check for specific patterns
+        if 'def ' in code_lower:
+            concepts.append("function")
+        
+        if 'import ' in code_lower:
+            concepts.append("import")
+        
+        if 'print(' in code_lower:
+            concepts.append("print")
+        
+        if 'input(' in code_lower:
+            concepts.append("input")
+        
+        # Check arithmetic operations
+        if any(op in code_lower for op in ['+', '-', '*', '/', '%', '**', '//']):
+            concepts.append("arithmetic")
+        
+        # Check comparisons
+        if any(op in code_lower for op in ['==', '!=', '<', '>', '<=', '>=']):
+            concepts.append("comparison")
+        
+        # Check logical operators
+        if any(op in code_lower for op in ['and ', 'or ', 'not ']):
+            concepts.append("logical")
+        
+        return list(set(concepts))
     
-    def _is_in_comment(self, content: str, pattern: str) -> bool:
-        """Check if pattern appears within a comment."""
-        lines = content.split('\n')
+    def check_indentation(self, code: str):
+        """Check indentation consistency"""
+        lines = code.split('\n')
+        indent_levels = []
+        
         for line in lines:
-            if pattern in line.lower():
-                stripped = line.strip()
-                if stripped.startswith('#') or stripped.startswith('//') or '/*' in line:
-                    return True
-        return False
-    
-    def _clean_code(self, content: str, language: str) -> List[str]:
-        """
-        Clean code by removing comments and empty lines.
+            if line.strip():  # Skip empty lines
+                leading_spaces = len(line) - len(line.lstrip())
+                indent_levels.append(leading_spaces)
         
-        Args:
-            content: Source code content
-            language: Programming language
+        # Check if indentation is consistent (multiple of 4)
+        is_consistent = all(indent % 4 == 0 for indent in indent_levels)
+        
+        return {
+            "levels": list(set(indent_levels)),
+            "is_consistent": is_consistent,
+            "max_indent": max(indent_levels) if indent_levels else 0,
+            "recommended_fix": "Use 4 spaces for indentation" if not is_consistent else "Indentation is good"
+        }
+    
+    def analyze_code_quality(self, code: str):
+        """Analyze code quality metrics"""
+        lines = code.split('\n')
+        
+        # Remove comments and empty lines for analysis
+        code_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith('#'):
+                code_lines.append(line)
+        
+        total_lines = len(lines)
+        code_lines_count = len(code_lines)
+        comment_lines = sum(1 for line in lines if line.strip().startswith('#'))
+        empty_lines = sum(1 for line in lines if not line.strip())
+        
+        # Calculate complexity score
+        complexity_score = 0
+        for line in code_lines:
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in ['for ', 'while ', 'if ', 'elif ', 'else:']):
+                complexity_score += 1
+            if 'def ' in line_lower:
+                complexity_score += 2
+            if 'import ' in line_lower or 'from ' in line_lower:
+                complexity_score += 0.5
+            if 'try:' in line_lower or 'except ' in line_lower:
+                complexity_score += 1
+            if 'class ' in line_lower:
+                complexity_score += 3
+        
+        complexity_level = "low"
+        if complexity_score >= 10:
+            complexity_level = "high"
+        elif complexity_score >= 5:
+            complexity_level = "medium"
+        
+        return {
+            "lines_analysis": {
+                "total_lines": total_lines,
+                "code_lines": code_lines_count,
+                "comment_lines": comment_lines,
+                "empty_lines": empty_lines,
+                "comment_ratio": round(comment_lines / total_lines, 2) if total_lines > 0 else 0
+            },
+            "complexity": {
+                "score": complexity_score,
+                "level": complexity_level
+            },
+            "readability": {
+                "has_comments": comment_lines > 0,
+                "has_empty_lines": empty_lines > 0,
+                "avg_line_length": round(sum(len(line) for line in lines) / total_lines, 1) if total_lines > 0 else 0,
+                "rating": "Good" if comment_lines > 0 and empty_lines > 0 else "Needs Improvement"
+            }
+        }
+    
+    def check_variable_names(self, code: str):
+        """Check variable naming conventions"""
+        try:
+            tree = ast.parse(code)
+            variables = []
             
-        Returns:
-            List of cleaned code lines
-        """
-        if language == 'python':
-            return self._clean_python_code(content)
-        else:  # C or C++
-            return self._clean_c_cpp_code(content)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                    variables.append(node.id)
+                elif isinstance(node, ast.FunctionDef):
+                    variables.append(node.name)
+                elif isinstance(node, ast.ClassDef):
+                    variables.append(node.name)
+                elif isinstance(node, ast.arg):
+                    variables.append(node.arg)
+            
+            # Check naming conventions
+            poorly_named = []
+            well_named = []
+            
+            for var in set(variables):
+                if len(var) == 1 and var.isalpha():  # Single letter variables
+                    poorly_named.append(var)
+                elif var.isdigit():  # Numbers as variable names
+                    poorly_named.append(var)
+                elif '_' in var:  # Snake case
+                    well_named.append(var)
+                elif var[0].isupper():  # Class or constant
+                    well_named.append(var)
+                elif var.islower():  # Lowercase variables
+                    well_named.append(var)
+                else:
+                    poorly_named.append(var)
+            
+            return {
+                "all_variables": list(set(variables)),
+                "well_named": well_named,
+                "poorly_named": poorly_named,
+                "has_descriptive_names": len(poorly_named) < len(well_named),
+                "score": len(well_named) / len(set(variables)) if variables else 0
+            }
+        except:
+            return {"error": "Could not analyze variable names"}
     
-    def _clean_python_code(self, content: str) -> List[str]:
-        """Clean Python code."""
-        cleaned_lines = []
-        lines = content.split('\n')
+    def print_analysis(self, code: str, question_id: int = None):
+        """Print detailed analysis of the code"""
+        print("\n" + "="*60)
+        print("📊 CODE ANALYSIS REPORT")
+        print("="*60)
         
-        for line_num, line in enumerate(lines, 1):
-            try:
-                stripped_line = line.rstrip()  # Only remove trailing whitespace
-                
-                # Skip empty lines
-                if not stripped_line:
-                    continue
-                
-                # Handle indentation
-                leading_spaces = len(stripped_line) - len(stripped_line.lstrip())
-                
-                # Remove comments
-                if '#' in stripped_line:
-                    # Handle # in strings
-                    in_string = False
-                    string_char = None
-                    for i, char in enumerate(stripped_line):
-                        if char in ('"', "'") and (i == 0 or stripped_line[i-1] != '\\'):
-                            if not in_string:
-                                in_string = True
-                                string_char = char
-                            elif char == string_char:
-                                in_string = False
-                        
-                        if char == '#' and not in_string:
-                            stripped_line = stripped_line[:i]
-                            break
-                
-                stripped_line = stripped_line.rstrip()
-                
-                if stripped_line:
-                    cleaned_lines.append((' ' * leading_spaces) + stripped_line)
-                    
-            except Exception as e:
-                logger.warning(f"Error cleaning Python line {line_num}: {e}")
-                continue
+        # Basic code reading
+        result = self.read_code(code, question_id)
         
-        return cleaned_lines
-    
-    def _clean_c_cpp_code(self, content: str) -> List[str]:
-        """Clean C/C++ code."""
-        cleaned_lines = []
-        in_multiline_comment = False
-        lines = content.split('\n')
+        if "error" in result:
+            print(f"❌ Error: {result['error']}")
+            return
         
-        for line_num, line in enumerate(lines, 1):
-            try:
-                stripped_line = line.rstrip()
-                
-                # Skip empty lines
-                if not stripped_line:
-                    continue
-                
-                # Track indentation
-                leading_spaces = len(stripped_line) - len(stripped_line.lstrip())
-                result_line = []
-                i = 0
-                
-                while i < len(stripped_line):
-                    if in_multiline_comment:
-                        # Check for comment end
-                        if i + 1 < len(stripped_line) and stripped_line[i:i+2] == '*/':
-                            in_multiline_comment = False
-                            i += 2
-                        else:
-                            i += 1
-                    else:
-                        # Check for string literals
-                        if stripped_line[i] in ('"', "'"):
-                            quote_char = stripped_line[i]
-                            result_line.append(quote_char)
-                            i += 1
-                            
-                            # Skip until matching quote (handling escaped quotes)
-                            while i < len(stripped_line):
-                                result_line.append(stripped_line[i])
-                                if stripped_line[i] == quote_char and (i == 0 or stripped_line[i-1] != '\\'):
-                                    break
-                                i += 1
-                            i += 1
-                        
-                        # Check for comment start
-                        elif i + 1 < len(stripped_line):
-                            if stripped_line[i:i+2] == '//':
-                                # Single line comment - ignore rest of line
-                                break
-                            elif stripped_line[i:i+2] == '/*':
-                                in_multiline_comment = True
-                                i += 2
-                            else:
-                                result_line.append(stripped_line[i])
-                                i += 1
-                        else:
-                            result_line.append(stripped_line[i])
-                            i += 1
-                
-                # Add line if it has content
-                line_content = ''.join(result_line).strip()
-                if line_content:
-                    cleaned_lines.append((' ' * leading_spaces) + line_content)
-                    
-            except Exception as e:
-                logger.warning(f"Error cleaning C/C++ line {line_num}: {e}")
-                continue
+        # Print basic info
+        basic = result.get('basic_info', {})
+        print(f"\n📋 BASIC INFORMATION:")
+        print(f"   • Lines of code: {basic.get('lines', 0)}")
+        print(f"   • Characters: {basic.get('characters', 0)}")
+        print(f"   • Functions: {', '.join(basic.get('functions', [])) or 'None'}")
+        print(f"   • Imports: {', '.join(basic.get('imports', [])) or 'None'}")
         
-        return cleaned_lines
+        # Print indentation info
+        indent = basic.get('indentation_levels', {})
+        if indent:
+            status = "✅ Good" if indent.get('is_consistent') else "❌ Needs Fix"
+            print(f"   • Indentation: {status}")
+            if not indent.get('is_consistent'):
+                print(f"     ↳ {indent.get('recommended_fix', '')}")
+        
+        # Print concepts analysis
+        concepts = result.get('concepts_analysis', {})
+        print(f"\n🎯 CONCEPTS ANALYSIS:")
+        print(f"   • Detected: {', '.join(concepts.get('detected_concepts', [])) or 'None'}")
+        print(f"   • Required: {', '.join(concepts.get('required_concepts', [])) or 'None'}")
+        
+        if concepts.get('missing_concepts'):
+            print(f"   ❌ Missing: {', '.join(concepts.get('missing_concepts', []))}")
+        else:
+            print(f"   ✅ All required concepts are present!")
+        
+        # Print syntax check
+        syntax = result.get('syntax_check', {})
+        if syntax.get('has_syntax_error'):
+            print(f"\n❌ SYNTAX ERROR:")
+            print(f"   • {syntax.get('error_message')}")
+            if syntax.get('error_line'):
+                print(f"   • Line: {syntax.get('error_line')}, Column: {syntax.get('error_column')}")
+        else:
+            print(f"\n✅ No syntax errors found!")
+        
+        # Print question info
+        if question_id:
+            q_info = result.get('question_info', {})
+            if q_info:
+                print(f"\n📝 QUESTION INFORMATION:")
+                print(f"   • ID: {q_info.get('id')}")
+                print(f"   • Difficulty: {q_info.get('difficulty', 'Unknown').upper()}")
+                print(f"   • Question: {q_info.get('question')}")
+        
+        # Additional quality analysis
+        print(f"\n⭐ CODE QUALITY ANALYSIS:")
+        quality = self.analyze_code_quality(code)
+        
+        lines_info = quality.get('lines_analysis', {})
+        print(f"   • Total lines: {lines_info.get('total_lines')}")
+        print(f"   • Code lines: {lines_info.get('code_lines')}")
+        print(f"   • Comments: {lines_info.get('comment_lines')}")
+        print(f"   • Empty lines: {lines_info.get('empty_lines')}")
+        print(f"   • Comment ratio: {lines_info.get('comment_ratio')}")
+        
+        complexity = quality.get('complexity', {})
+        print(f"   • Complexity score: {complexity.get('score')} ({complexity.get('level').upper()})")
+        
+        readability = quality.get('readability', {})
+        print(f"   • Readability: {readability.get('rating')}")
+        
+        # Variable analysis
+        variables = self.check_variable_names(code)
+        if "error" not in variables:
+            print(f"\n🔤 VARIABLE NAMING:")
+            print(f"   • Total variables: {len(variables.get('all_variables', []))}")
+            print(f"   • Well named: {len(variables.get('well_named', []))}")
+            print(f"   • Poorly named: {len(variables.get('poorly_named', []))}")
+            score_percent = variables.get('score', 0) * 100
+            print(f"   • Naming score: {score_percent:.1f}%")
+            
+            if variables.get('poorly_named'):
+                print(f"   • Poor variables: {', '.join(variables.get('poorly_named', []))}")
+        
+        print("\n" + "="*60)
+        print("📈 ANALYSIS COMPLETE")
+        print("="*60 + "\n")
+        
+        return result
 
 
-def test_code_reader():
-    """Test the enhanced code reader."""
-    reader = CodeReader()
-    
-    print("🧪 Testing Code Reader")
-    print("=" * 50)
-    
-    # Test 1: Python code cleaning
-    python_code = '''# This is a comment
-def hello_world():
-    print("Hello, World!")  # Print greeting
-    x = 10  # This is a variable
-    
-    # Check condition
-    if x > 5:
-        print("x is greater than 5")
-    
-    return x'''
-    
-    print("\nTest 1: Python Code Cleaning")
-    print("-" * 30)
-    cleaned, error = reader.read_code_from_text(python_code, 'python')
-    
-    if error:
-        print(f"Error: {error}")
-    else:
-        print(f"Cleaned {len(cleaned)} lines:")
-        for i, line in enumerate(cleaned, 1):
-            print(f"{i:3}: {line}")
-    
-    # Test 2: C code cleaning
-    c_code = '''// Single line comment
-#include <stdio.h>
-
-/* Multiline
-   comment */
-   
-int main() {
-    char *msg = "Hello // not a comment";
-    int x = 10;  // Inline comment
-    
-    /* Another
-       comment */
-    
-    if (x > 5) {
-        printf("%s\\n", msg);
-    }
-    
-    return 0;
-}'''
-    
-    print("\n\nTest 2: C Code Cleaning")
-    print("-" * 30)
-    cleaned, error = reader.read_code_from_text(c_code, 'c')
-    
-    if error:
-        print(f"Error: {error}")
-    else:
-        print(f"Cleaned {len(cleaned)} lines:")
-        for i, line in enumerate(cleaned, 1):
-            print(f"{i:3}: {line}")
-    
-    # Test 3: Error cases
-    print("\n\nTest 3: Error Handling")
-    print("-" * 30)
-    
-    # Empty input
-    cleaned, error = reader.read_code_from_text("", "python")
-    print(f"Empty input: {error}")
-    
-    # Invalid language
-    cleaned, error = reader.read_code_from_text("print('test')", "java")
-    print(f"Invalid language: {error}")
-    
-    # Potentially malicious code
-    malicious_code = "import os\nos.system('rm -rf /')"
-    cleaned, error = reader.read_code_from_text(malicious_code, "python")
-    print(f"Malicious pattern: {error}")
-
-
-def main():
-    """Main function for command-line usage."""
-    import sys
-    
-    if len(sys.argv) != 2:
-        print("Usage: python code_reader.py <file_path>")
-        print("Example: python code_reader.py ../test.py")
-        sys.exit(1)
-    
-    file_path = sys.argv[1]
-    reader = CodeReader()
-    
-    cleaned_lines, language, error = reader.read_code_file(file_path)
-    
-    if error:
-        print(f"❌ Error: {error}")
-        sys.exit(1)
-    
-    print(f"✅ Successfully read {file_path} ({language})")
-    print(f"📊 Cleaned lines: {len(cleaned_lines)}")
-    print("\nCleaned code:")
-    print("-" * 50)
-    
-    for i, line in enumerate(cleaned_lines, 1):
-        print(f"{i:4}: {line}")
-
-
+# Main function for testing
 if __name__ == "__main__":
-    # Run tests when executed directly
-    test_code_reader()
+    print("🧪 Testing CodeReader...")
     
-    # Uncomment to test with file argument
-    # import sys
-    # if len(sys.argv) > 1:
-    #     main()
-    # else:
-    #     print("\nTo read a file: python code_reader.py <file_path>")
+    # Create instance
+    reader = CodeReader()
+    
+    # Test with sample code
+    sample_code = """
+# This is a sample Python program
+def print_numbers(n):
+    for i in range(1, n+1):
+        if i % 2 == 0:
+            print(f"{i} is even")
+        else:
+            print(f"{i} is odd")
+
+# Call the function
+print_numbers(10)
+"""
+    
+    print("Sample Code:")
+    print("-" * 40)
+    print(sample_code)
+    print("-" * 40)
+    
+    # Analyze the code for question 1 (for loop question)
+    print("\nAnalyzing code for Question ID 1...")
+    result = reader.print_analysis(sample_code, question_id=1)
+    
+    # Test with another sample
+    print("\n" + "="*60)
+    print("Testing with while loop code...")
+    
+    while_code = """
+# While loop example
+counter = 0
+while counter < 5:
+    print(f"Counter: {counter}")
+    counter += 1
+print("Done!")
+"""
+    
+    result2 = reader.print_analysis(while_code, question_id=21)
+    
+    # Test with error code
+    print("\n" + "="*60)
+    print("Testing with syntax error...")
+    
+    error_code = """
+def test():
+    print("Hello"
+    x = 10
+    return x
+"""
+    
+    result3 = reader.print_analysis(error_code)
+    
+    print("\n✅ CodeReader is working correctly!")
+    print("Use reader.read_code(your_code, question_id) to analyze code.")
+    print("Use reader.print_analysis(your_code, question_id) to see formatted output.")

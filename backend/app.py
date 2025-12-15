@@ -11,7 +11,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 import sys
-
+import json
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -33,7 +33,12 @@ detector = MistakeDetector()
 feedback_gen = FeedbackGenerator()
 ai_detector = AIDetector()
 history_manager = HistoryManager()
+QUESTIONS_PATH = os.path.join(os.path.dirname(__file__), "../data/questions.json")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+QUESTIONS_PATH = os.path.join(BASE_DIR, "..", "data", "questions.json")
 
+with open(QUESTIONS_PATH, "r", encoding="utf-8-sig") as f:
+    QUESTIONS = json.load(f)
 @app.route('/')
 def index():
     """Serve the frontend index.html."""
@@ -126,6 +131,18 @@ def health_check():
         'version': '1.0',
         'modules_loaded': True
     })
+@app.route('/questions', methods=['GET'])
+def get_questions():
+    """
+    Return coding practice questions.
+    Optional query param: ?topic=for_loop / while_loop / nested_loop / if_else
+    """
+    topic = request.args.get("topic")
+
+    if topic:
+        return jsonify(QUESTIONS.get(topic, []))
+
+    return jsonify(QUESTIONS)
 
 @app.route('/examples', methods=['GET'])
 def get_examples():
